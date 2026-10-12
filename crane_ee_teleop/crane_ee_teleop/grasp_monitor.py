@@ -15,7 +15,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
-from crane_ee_teleop.gazebo_objects import model_position_in_robot_frame
+from crane_ee_teleop.gazebo_objects import cube_center_in_robot_frame
 from crane_ee_teleop.kinematics import fk
 
 GRIPPER_JOINT_NAME = "crane_plus_joint_hand"
@@ -28,7 +28,7 @@ class GraspMonitor(Node):
         super().__init__("crane_plus_grasp_monitor")
         print(
             "手先からブロックまでの位置の差を表示します。前後・左右・上下はロボットの向きが基準"
-            "（前＝ロボットの正面、左右＝ロボットから見た左右）。手先は指の間の点。"
+            "（前＝ロボットの正面、左右＝ロボットから見た左右）。手先は指の間の点、ブロックは中心の点。"
         )
         self.create_subscription(JointState, "/joint_states", self._on_state, 10)
         self.joints = None
@@ -42,7 +42,7 @@ class GraspMonitor(Node):
 
     def _read_cube_loop(self):
         while self.running:
-            self.cube = model_position_in_robot_frame() or self.cube
+            self.cube = cube_center_in_robot_frame() or self.cube
             time.sleep(0.1)
 
     def _print(self):
