@@ -20,6 +20,7 @@ setup(
     entry_points={
         "console_scripts": [
             "teleop_keyboard_ee = crane_ee_teleop.teleop_keyboard_ee:main",
+            "grasp_monitor = crane_ee_teleop.grasp_monitor:main",
         ],
     },
 )
