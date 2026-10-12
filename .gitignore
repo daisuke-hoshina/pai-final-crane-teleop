@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+install/
+log/
+# データ・モデル・動画は入れない（識別子と再現手順だけを README に書く）
+dataset/
+checkpoints/
+outputs/
+wandb/
+*.db3
+*.mcap
+*.safetensors
+*.mp4
+.env
