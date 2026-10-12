@@ -20,11 +20,16 @@ from crane_ee_teleop.kinematics import fk
 
 GRIPPER_JOINT_NAME = "crane_plus_joint_hand"
 PRINT_PERIOD = 0.5  # [s]
+GRASP_TOL = 0.01  # [m] 前後・左右・上下がすべてこれ以内なら「つかめる位置」と表示する
 
 
 class GraspMonitor(Node):
     def __init__(self):
         super().__init__("crane_plus_grasp_monitor")
+        print(
+            "手先からブロックまでの位置の差を表示します。前後・左右・上下はロボットの向きが基準"
+            "（前＝ロボットの正面、左右＝ロボットから見た左右）。手先は指の間の点。"
+        )
         self.create_subscription(JointState, "/joint_states", self._on_state, 10)
         self.joints = None
         self.cube = None
@@ -42,23 +47,36 @@ class GraspMonitor(Node):
 
     def _print(self):
         if self.joints is None or self.cube is None:
-            print("/joint_states と Gazebo のブロックの位置を待っています", flush=True)
+            print(
+                "\r\033[K/joint_states と Gazebo のブロックの位置を待っています", end="", flush=True
+            )
             return
         try:
             q = tuple(self.joints[f"crane_plus_joint{k}"] for k in (1, 2, 3, 4))
         except KeyError:
             return
         hand = fk(q)
+        # ロボット基準（+x が正面、+y が左、+z が上）で、手先からブロックまでの差
         dx, dy, dz = (c - h for c, h in zip(self.cube, (hand.x, hand.y, hand.z), strict=True))
-        grip = self.joints.get(GRIPPER_JOINT_NAME, 0.0)
+        tilt_from_down = abs(math.degrees(math.pi - hand.pitch))
+        grip = "閉" if self.joints.get(GRIPPER_JOINT_NAME, 0.0) > 0.0 else "開"
+        ok = max(abs(dx), abs(dy), abs(dz)) < GRASP_TOL
         print(
-            f"手先→ブロック  前後 {100 * dx:+5.1f}cm  左右 {100 * dy:+5.1f}cm  上下 {100 * dz:+5.1f}cm"
-            f"  距離 {100 * math.dist((0, 0, 0), (dx, dy, dz)):4.1f}cm"
-            f" | 手先の傾き {math.degrees(hand.pitch):4.0f}deg（180=真下）"
-            f" | グリッパー {math.degrees(grip):+4.0f}deg"
-            f" | ブロックの高さ {100 * self.cube[2]:+5.1f}cm",
+            "\r\033[K"
+            f"ブロックは手先から見て  {_dir(dx, '前', '後ろ')} / {_dir(dy, '左', '右')} / {_dir(dz, '上', '下')}"
+            f"  （距離 {100 * math.dist((0, 0, 0), (dx, dy, dz)):.1f}cm）"
+            f"   手先の向き: 真下から {tilt_from_down:.0f}°   グリッパー: {grip}"
+            + ("   ← つかめる位置です" if ok else ""),
+            end="",
             flush=True,
         )
+
+
+def _dir(d, plus, minus):
+    """差 d [m] を「前に 1.2cm」のような言葉にする。"""
+    if abs(d) < 0.0005:
+        return f"{plus}{minus}は一致"
+    return f"{plus if d > 0 else minus}に {100 * abs(d):4.1f}cm"
 
 
 def main():
@@ -69,6 +87,7 @@ def main():
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        print()
         node.running = False
         node.destroy_node()
         rclpy.try_shutdown()

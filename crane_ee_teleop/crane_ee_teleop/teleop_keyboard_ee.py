@@ -48,7 +48,7 @@ A/D: hand left / right       (+y / -y)
 R/F: hand up / down          (+z / -z)
 T/G: tilt hand down / up     (pitch + / -)
 V:   point the hand straight down as far as reachable
-     (W/S/A/D/R/F also tilt the hand toward straight-down little by little)
+     (W/S/A/D/R/F keep the tilt; it changes only when the move is otherwise unreachable)
 O:   Open gripper
 C:   Close gripper
 X:   Reset robot to vertical (all-zero) position
@@ -151,12 +151,10 @@ class EETeleopNode(Node):
             # T/G: 傾きだけを変える
             candidates = [(p.pitch + dpitch, "")]
         else:
-            # 位置を優先する。まず傾きを真下向き (pi) へ 1 段近づけた姿勢を試し、だめなら今の傾き、
-            # それでも届かなければ傾きを少ない順に変えて探す（直立は腕が伸びきっているので、
-            # 傾きを保ったままでは前へ出られない）。つかむ動作では真下向きが要るため、
-            # 動かしているうちに手先が自然に下を向くようにしている
-            toward_down = p.pitch + max(-PITCH_STEP, min(PITCH_STEP, math.pi - p.pitch))
-            candidates = [(toward_down, ""), (p.pitch, "")]
+            # 位置だけを動かし、傾きは変えない。そのままの傾きで届かないときだけ、傾きを少ない順に
+            # 変えて届くものを探し、変えた角度を表示する（直立は腕が伸びきっているので、
+            # 傾きを保ったままでは前へ出られない）
+            candidates = [(p.pitch, "")]
             for k in range(1, PITCH_SEARCH_STEPS + 1):
                 for sign in (1.0, -1.0):
                     candidates.append(
