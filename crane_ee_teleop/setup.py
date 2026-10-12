@@ -17,5 +17,9 @@ setup(
     description="Hand-space (end-effector) keyboard teleoperation for CRANE+ V2 in Gazebo",
     license="MIT",
     tests_require=["pytest"],
-    entry_points={"console_scripts": []},
+    entry_points={
+        "console_scripts": [
+            "teleop_keyboard_ee = crane_ee_teleop.teleop_keyboard_ee:main",
+        ],
+    },
 )
