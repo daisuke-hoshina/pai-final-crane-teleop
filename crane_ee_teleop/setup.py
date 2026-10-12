@@ -21,6 +21,7 @@ setup(
         "console_scripts": [
             "teleop_keyboard_ee = crane_ee_teleop.teleop_keyboard_ee:main",
             "grasp_monitor = crane_ee_teleop.grasp_monitor:main",
+            "teleop_keyboard_joint = crane_ee_teleop.teleop_keyboard_joint:main",
         ],
     },
 )

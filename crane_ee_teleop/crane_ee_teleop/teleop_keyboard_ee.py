@@ -32,6 +32,10 @@ GRIPPER_JOINT_NAME = "crane_plus_joint_hand"
 GRIPPER_OPEN = -0.5236  # -30 deg
 GRIPPER_CLOSE = 0.1745  # 10 deg
 PUBLISH_PERIOD = 0.05  # 20Hz
+ARM_TIME_FROM_START = 0.1  # [s] physicalai_teleop と同じ
+# [s] グリッパーは短くする。20Hz で送り直すたびに軌道が今の角度から作り直されるので、0.1 秒だと目標が
+# 今の角度のすぐ先にしかならず、ブロックに当たると弱い力でしか握れない（teleop_keyboard_joint も同じ値）
+GRIPPER_TIME_FROM_START = 0.01
 
 POS_STEP = 0.005  # [m]  1 回のキーで手先を動かす距離
 PITCH_STEP = 0.05  # [rad] 1 回のキーで手先を傾ける角度
@@ -233,15 +237,15 @@ class EETeleopNode(Node):
             if self.q is None:
                 return
             arm, gripper = to_arm_order(self.q), self.gripper_pos
-        for pub, names, positions in (
-            (self.arm_pub, ARM_JOINT_NAMES, arm),
-            (self.gripper_pub, [GRIPPER_JOINT_NAME], [gripper]),
+        for pub, names, positions, duration in (
+            (self.arm_pub, ARM_JOINT_NAMES, arm, ARM_TIME_FROM_START),
+            (self.gripper_pub, [GRIPPER_JOINT_NAME], [gripper], GRIPPER_TIME_FROM_START),
         ):
             jt = JointTrajectory()
             jt.joint_names = names
             pt = JointTrajectoryPoint()
             pt.positions = [float(v) for v in positions]
-            pt.time_from_start.nanosec = int(0.1 * 1e9)  # physicalai_teleop と同じ
+            pt.time_from_start.nanosec = int(duration * 1e9)
             jt.points.append(pt)
             pub.publish(jt)
 

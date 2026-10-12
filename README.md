@@ -14,6 +14,9 @@ Gazebo 上の CRANE+ V2 に、キーボードで手先を動かす「手先空�
   - `crane_ee_teleop/kinematics.py` … CRANE+ V2 の順運動学・逆運動学（解析解。ROS に依存しない）
   - `crane_ee_teleop/teleop_keyboard_ee.py` … 手先空間キーボードテレオペ。
     送るトピック・形式・周期（20Hz）は `physicalai_teleop` と同じ
+  - `crane_ee_teleop/teleop_keyboard_joint.py` … 関節空間キーボードテレオペ（比較の対照群）。
+    `physicalai_teleop` のコピーで、変更はグリッパーの `time_from_start`（0.1 → 0.01 秒）だけ。
+    手先空間テレオペと同じ値にそろえ、比較で変える条件をテレオペ方式だけにする
   - `crane_ee_teleop/grasp_monitor.py` … 手先からブロックまでの距離を表示する（指令は送らない。どちらのテレオペとも併用できる）
   - `crane_ee_teleop/gazebo_objects.py` … Gazebo のモデル（ブロック）の位置を読む
 
