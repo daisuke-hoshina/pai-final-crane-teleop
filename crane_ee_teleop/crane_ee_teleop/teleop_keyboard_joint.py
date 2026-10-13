@@ -3,7 +3,11 @@
 
 matsuolab/physicalai_teleop の physicalai_teleop/teleop_keyboard.py
 （コミット 0ef2a00fd6d7bb39377969d10f3d26268e447fd9、MIT License）をコピーしたもの。
-変更点は 1 か所だけ: グリッパーの指令の time_from_start を 0.1 秒 → GRIPPER_TIME_FROM_START（0.01 秒）。
+変更点は 2 か所だけ:
+  1. グリッパーの指令の time_from_start を 0.1 秒 → GRIPPER_TIME_FROM_START（0.01 秒）
+  2. X で戻る姿勢を直立 (0, 0, 0, 0) → 手先空間テレオペと同じホーム（机の上 10cm、手先はほぼ真下向き）
+
+2 の理由: 比較実験で、どちらのテレオペでもエピソードを同じ姿勢から始めるため。
 
 理由: 20Hz で指令を送り直すと、コントローラーは毎回「今の角度から time_from_start かけて目標へ」と
 軌道を作り直す。0.1 秒だとグリッパーの目標が今の角度のすぐ先にしかならず、ブロックに当たると
@@ -23,6 +27,8 @@ import rclpy
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
+from crane_ee_teleop.teleop_keyboard_ee import HOME_Q, to_arm_order
+
 HELP = """
 Teleop Crane+ V2 (Direct Joint Control):
 ---------------------------------------
@@ -31,7 +37,7 @@ W/S: + / - selected joint
 R/F: + / - all joints (coarse)
 O:   Open gripper
 C:   Close gripper
-X:   Reset robot to vertical (all-zero) position
+X:   Go to home (same pose as teleop_keyboard_ee)
 ESC: Quit
 """
 
@@ -42,7 +48,8 @@ ARM_JOINT_NAMES = [
     "crane_plus_joint3",
 ]
 GRIPPER_JOINT_NAME = "crane_plus_joint_hand"
-ARM_INIT = [0.0, 0.0, 0.0, 0.0]
+# 変更点 2（元は [0.0, 0.0, 0.0, 0.0]）。並びは ARM_JOINT_NAMES と同じ (j1, j2, j4, j3)
+ARM_INIT = to_arm_order(HOME_Q)
 GRIPPER_OPEN = -0.5236  # -30 deg
 GRIPPER_CLOSE = 0.1745  # 10 deg
 ARM_STEP = 0.05

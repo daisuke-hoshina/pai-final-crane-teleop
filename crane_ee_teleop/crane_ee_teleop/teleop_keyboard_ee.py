@@ -1,7 +1,10 @@
 """CRANE+ V2 の手先空間キーボードテレオペ。
 
-キーで手先の位置と傾きを動かし、逆運動学で 4 関節の目標角度に変換して送る。
-送るトピック・形式・周期は physicalai_teleop（関節空間テレオペ）と同じにしてある。
+キーで手先の位置（前後・左右・上下）だけを動かす。手先の向きは操作せず、いつも
+「その位置で届く範囲でいちばん真下に近い向き」に自動で決める（上からつかむため）。
+逆運動学で 4 関節の目標角度に変換して送る。
+
+送るトピック・形式・周期（20Hz）は physicalai_teleop（関節空間テレオペ）と同じ。
 記録・変換・学習・推論の流れをそのまま使い、比較実験で変える条件をテレオペ方式だけにするため。
 
   ros2 run crane_ee_teleop teleop_keyboard_ee
@@ -19,7 +22,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
-from crane_ee_teleop.kinematics import L2, L3, SHOULDER_HEIGHT, TOOL_LENGTH, Pose, fk, ik
+from crane_ee_teleop.kinematics import Pose, fk, ik
 
 # physicalai_teleop と同じ並び・値（関節名の並びは joint1, 2, 4, 3）
 ARM_JOINT_NAMES = [
@@ -37,39 +40,45 @@ ARM_TIME_FROM_START = 0.1  # [s] physicalai_teleop と同じ
 # 今の角度のすぐ先にしかならず、ブロックに当たると弱い力でしか握れない（teleop_keyboard_joint も同じ値）
 GRIPPER_TIME_FROM_START = 0.01
 
-POS_STEP = 0.005  # [m]  1 回のキーで手先を動かす距離
-PITCH_STEP = 0.05  # [rad] 1 回のキーで手先を傾ける角度
-MAX_JOINT_JUMP = 0.5  # [rad] 1 回のキーでこれ以上動く関節があれば、特異点の近くとみなして無視する
-PITCH_SEARCH_STEPS = (
-    12  # 位置だけを動かして届かないとき、傾きを PITCH_STEP 刻みで最大 ±0.6 rad まで変えて探す
-)
+POS_STEP = 0.005  # [m] 1 回のキーで手先を動かす距離
+# X で戻るホーム（机の上 10cm、手先はほぼ真下向き）。直立は腕が伸びきって前へ出られず、
+# 真上では横に動かすと根元が大きく回るので、ホームにしない。teleop_keyboard_joint も同じ姿勢に戻る
+HOME_POSITION = (0.10, 0.0, 0.10)
+MAX_JOINT_JUMP = 0.5  # [rad] 1 回のキーでこれ以上動く関節があれば、その動きは受け付けない
+PITCH_CANDIDATES = [math.pi - 0.05 * k for k in range(0, 40)]  # 真下向きから順に試す向き
 
 HELP = """
-Teleop CRANE+ V2 (Hand-space control):
----------------------------------------
-W/S: hand forward / backward (+x / -x)
-A/D: hand left / right       (+y / -y)
-R/F: hand up / down          (+z / -z)
-T/G: tilt hand down / up     (pitch + / -)
-V:   point the hand straight down as far as reachable
-     (W/S/A/D/R/F keep the tilt; it changes only when the move is otherwise unreachable)
-O:   Open gripper
-C:   Close gripper
-X:   Reset robot to vertical (all-zero) position
-     (vertical = arm fully stretched: press F to lower the hand before W/A/D)
-ESC: Quit
+Teleop CRANE+ V2 (Hand-space control)
+-------------------------------------
+W/S: hand forward / backward
+A/D: hand left / right
+R/F: hand up / down
+O/C: open / close gripper
+X:   go to home (10 cm above the table, hand pointing down)
+ESC: quit
+The hand always points as straight down as it can.
 """
 
 KEY_MOVES = {
-    "w": (POS_STEP, 0.0, 0.0, 0.0),
-    "s": (-POS_STEP, 0.0, 0.0, 0.0),
-    "a": (0.0, POS_STEP, 0.0, 0.0),
-    "d": (0.0, -POS_STEP, 0.0, 0.0),
-    "r": (0.0, 0.0, POS_STEP, 0.0),
-    "f": (0.0, 0.0, -POS_STEP, 0.0),
-    "t": (0.0, 0.0, 0.0, PITCH_STEP),
-    "g": (0.0, 0.0, 0.0, -PITCH_STEP),
+    "w": (POS_STEP, 0.0, 0.0),
+    "s": (-POS_STEP, 0.0, 0.0),
+    "a": (0.0, POS_STEP, 0.0),
+    "d": (0.0, -POS_STEP, 0.0),
+    "r": (0.0, 0.0, POS_STEP),
+    "f": (0.0, 0.0, -POS_STEP),
 }
+
+
+def solve_pointing_down(x, y, z, q_ref=None):
+    """(x, y, z) に手先を置き、届く範囲でいちばん真下に近い向きにする関節角。届かなければ None。"""
+    for pitch in PITCH_CANDIDATES:
+        q = ik(Pose(x, y, z, pitch), q_ref=q_ref)
+        if q is not None:
+            return q
+    return None
+
+
+HOME_Q = solve_pointing_down(*HOME_POSITION)
 
 
 class KeyboardInput:
@@ -105,7 +114,7 @@ class EETeleopNode(Node):
         self.create_subscription(JointState, "/joint_states", self._on_state, 10)
         self.lock = threading.Lock()
         self.q = None  # 指令中の関節角 (q1, q2, q3, q4)。最初の /joint_states で初期化する
-        self.pose = None
+        self.target = None  # 指令中の手先の位置 (x, y, z)
         self.gripper_pos = GRIPPER_OPEN
         self.running = True
         print(HELP)
@@ -122,85 +131,28 @@ class EETeleopNode(Node):
         except KeyError:
             return
         with self.lock:
-            self.q, self.pose = q, fk(q)
+            p = fk(q)
+            self.q, self.target = q, (p.x, p.y, p.z)
             self.gripper_pos = pos.get(GRIPPER_JOINT_NAME, GRIPPER_OPEN)
-        self._print_status("start")
+        self._print_status("start. Press X to go home")
 
     def _print_status(self, note=""):
-        p = self.pose
+        x, y, z = self.target
         print(
-            f"hand x={p.x:+.3f} y={p.y:+.3f} z={p.z:+.3f} pitch={math.degrees(p.pitch):+6.1f}deg"
+            f"hand x={100 * x:+5.1f}cm y={100 * y:+5.1f}cm z={100 * z:+5.1f}cm"
             + (f"  [{note}]" if note else ""),
             flush=True,
         )
 
-    def _solve(self, target):
-        """target を実現する関節角。届かない・関節が飛ぶなら None。"""
-        q = ik(target, q_ref=self.q)
-        if q is None:
-            return None, "unreachable"
-        if max(abs(a - b) for a, b in zip(q, self.q, strict=True)) > MAX_JOINT_JUMP:
-            return None, "jump"
-        return q, ""
-
-    def _stretched(self):
-        """腕がほぼ伸びきっているか（肩から手先までの距離が、届く最大距離の 98% 以上）。"""
-        p = self.pose
-        d = math.hypot(math.hypot(p.x, p.y), p.z - SHOULDER_HEIGHT)
-        return d > 0.98 * (L2 + L3 + TOOL_LENGTH)
-
-    def _move(self, dx, dy, dz, dpitch):
-        p = self.pose
-        if dpitch != 0.0:
-            # T/G: 傾きだけを変える
-            candidates = [(p.pitch + dpitch, "")]
-        else:
-            # 位置だけを動かし、傾きは変えない。そのままの傾きで届かないときだけ、傾きを少ない順に
-            # 変えて届くものを探し、変えた角度を表示する（直立は腕が伸びきっているので、
-            # 傾きを保ったままでは前へ出られない）
-            candidates = [(p.pitch, "")]
-            for k in range(1, PITCH_SEARCH_STEPS + 1):
-                for sign in (1.0, -1.0):
-                    candidates.append(
-                        (
-                            p.pitch + sign * k * PITCH_STEP,
-                            f"傾きを自動で {math.degrees(sign * k * PITCH_STEP):+.0f}deg 変更",
-                        )
-                    )
-        q, why, target, note = None, "unreachable", None, ""
-        for pitch, n in candidates:
-            t = Pose(p.x + dx, p.y + dy, p.z + dz, pitch)
-            sol, w = self._solve(t)
-            if sol is not None:
-                q, target, note = sol, t, n
-                break
-            if w == "jump":
-                why = "jump"
-        if q is None:
-            if why == "jump":
-                self._print_status("特異点の近く（真上付近）。先に W で前へ出してください")
-            elif self._stretched():
-                self._print_status("腕が伸びきっています。まず F で手先を下げてください")
-            else:
-                self._print_status("届かない・可動範囲外")
+    def _move(self, dx, dy, dz):
+        x, y, z = self.target
+        t = (x + dx, y + dy, z + dz)
+        q = solve_pointing_down(*t, q_ref=self.q)
+        if q is None or max(abs(a - b) for a, b in zip(q, self.q, strict=True)) > MAX_JOINT_JUMP:
+            self._print_status("cannot move there")
             return
-        self.q, self.pose = q, target
-        self._print_status(note)
-
-    def _point_down(self):
-        """V: 今の手先の位置のまま、届く範囲で最も真下向きに近い傾きにする。"""
-        p = self.pose
-        best = None
-        for k in range(0, 64):
-            pitch = p.pitch + (k / 63) * (math.pi - p.pitch)  # 今の傾きから真下向きまでを細かく試す
-            sol, _ = self._solve(Pose(p.x, p.y, p.z, pitch))
-            if sol is not None:
-                best = (sol, pitch)
-        if best is None:
-            self._print_status("この位置では傾きを変えられません")
-            return
-        self.q, self.pose = best[0], Pose(p.x, p.y, p.z, best[1])
-        self._print_status("真下向きに近づけました")
+        self.q, self.target = q, t
+        self._print_status()
 
     def _keyboard_loop(self):
         with KeyboardInput() as kb:
@@ -213,24 +165,21 @@ class EETeleopNode(Node):
                     break
                 with self.lock:
                     if self.q is None:
-                        print("/joint_states を待っています", flush=True)
+                        print("waiting for /joint_states", flush=True)
                         continue
                     k = key.lower()
                     if k in KEY_MOVES:
                         self._move(*KEY_MOVES[k])
-                    elif k == "v":
-                        self._point_down()
                     elif k == "o":
                         self.gripper_pos = GRIPPER_OPEN
-                        print("[INFO] Gripper: OPEN", flush=True)
+                        print("gripper: OPEN", flush=True)
                     elif k == "c":
                         self.gripper_pos = GRIPPER_CLOSE
-                        print("[INFO] Gripper: CLOSE", flush=True)
+                        print("gripper: CLOSE", flush=True)
                     elif k == "x":
-                        self.q = (0.0, 0.0, 0.0, 0.0)
-                        self.pose = fk(self.q)
+                        self.q, self.target = HOME_Q, HOME_POSITION
                         self.gripper_pos = GRIPPER_OPEN
-                        self._print_status("reset to vertical")
+                        self._print_status("home")
 
     def _publish(self):
         with self.lock:
