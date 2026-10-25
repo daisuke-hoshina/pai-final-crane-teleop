@@ -1,10 +1,12 @@
-"""手先から目標点（ブロックの真上）までの位置の差を表示する（テレオペの補助）。
+"""手先から目標点までの位置の差を表示する（テレオペの補助）。
 
 指令は何も送らないので、関節空間テレオペ・手先空間テレオペのどちらとも一緒に使える。
 
-  ros2 run crane_ee_teleop task_monitor
+  ros2 run crane_ee_teleop task_monitor                 # grasp: 目標点はつかむ位置。浮き上がりも出す
+  ros2 run crane_ee_teleop task_monitor --task reach    # reach: 目標点はブロックの真上
 """
 
+import argparse
 import math
 import threading
 import time
@@ -14,21 +16,32 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
-from crane_ee_teleop.task import SUCCESS_TOL, arm_q, hand_position, target_position
+from crane_ee_teleop.task import (
+    LIFT_SUCCESS,
+    SUCCESS_TOL,
+    TASKS,
+    arm_q,
+    cube_lift,
+    hand_position,
+    target_position,
+)
 
 PRINT_PERIOD = 0.3  # [s]
 
 
 class TaskMonitor(Node):
-    def __init__(self):
+    def __init__(self, task):
         super().__init__("crane_plus_task_monitor")
+        self.task = task
+        where = "つかむ位置＝ブロックの中心の 1cm 上" if task == "grasp" else "ブロックの真上"
         print(
-            "目標点（ブロックの真上）が手先から見てどこにあるかを表示します。"
+            f"目標点（{where}）が手先から見てどこにあるかを表示します。"
             "前＝ロボットの正面、左右＝ロボットから見た左右。"
         )
         self.create_subscription(JointState, "/joint_states", self._on_state, 10)
         self.q = None
         self.target = None
+        self.lift = None
         self.running = True
         threading.Thread(target=self._read_target_loop, daemon=True).start()
         self.create_timer(PRINT_PERIOD, self._print)
@@ -41,7 +54,9 @@ class TaskMonitor(Node):
 
     def _read_target_loop(self):
         while self.running:
-            self.target = target_position() or self.target
+            self.target = target_position(self.task) or self.target
+            if self.task == "grasp":
+                self.lift = cube_lift()
             time.sleep(0.2)
 
     def _print(self):
@@ -50,14 +65,20 @@ class TaskMonitor(Node):
             return
         d = [t - h for t, h in zip(self.target, hand_position(self.q), strict=True)]
         dist = math.dist((0, 0, 0), d)
-        print(
-            "\r\033[K"
+        line = (
             f"目標点は手先から見て  {_dir(d[0], '前', '後ろ')} / {_dir(d[1], '左', '右')}"
             f" / {_dir(d[2], '上', '下')}   （距離 {100 * dist:4.1f}cm）"
-            + ("   ★ 目標に到達" if dist < SUCCESS_TOL else ""),
-            end="",
-            flush=True,
         )
+        if self.task == "grasp":
+            lift = self.lift or 0.0
+            line += f"   ブロックの浮き {100 * lift:4.1f}cm"
+            if lift >= LIFT_SUCCESS:
+                line += "   ★ 持ち上げ成功"
+            elif dist < SUCCESS_TOL:
+                line += "   ★ つかむ位置"
+        elif dist < SUCCESS_TOL:
+            line += "   ★ 目標に到達"
+        print("\r\033[K" + line, end="", flush=True)
 
 
 def _dir(d, plus, minus):
@@ -68,8 +89,11 @@ def _dir(d, plus, minus):
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--task", choices=TASKS, default="grasp")
+    args, _ = ap.parse_known_args()
     rclpy.init()
-    node = TaskMonitor()
+    node = TaskMonitor(args.task)
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):

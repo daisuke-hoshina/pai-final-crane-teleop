@@ -22,6 +22,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
+from crane_ee_teleop.gazebo_objects import reset_cube
 from crane_ee_teleop.kinematics import Pose, fk, ik
 
 # physicalai_teleop と同じ並び・値（関節名の並びは joint1, 2, 4, 3）
@@ -44,6 +45,9 @@ POS_STEP = 0.005  # [m] 1 回のキーで手先を動かす距離
 # X で戻るホーム（机の上 10cm、手先はほぼ真下向き）。直立は腕が伸びきって前へ出られず、
 # 真上では横に動かすと根元が大きく回るので、ホームにしない。teleop_keyboard_joint も同じ姿勢に戻る
 HOME_POSITION = (0.10, 0.0, 0.10)
+# [m] 手先をこれより下げない。手先点は指先より 2〜3cm 上にあり、3.1cm で指先が机に着く。
+# 着いたまま下げ続けると、指令だけが机の下へ進み、腕が机の上を滑って外へ伸びる
+MIN_HAND_Z = 0.032
 MAX_JOINT_JUMP = 0.5  # [rad] 1 回のキーでこれ以上動く関節があれば、その動きは受け付けない
 PITCH_CANDIDATES = [math.pi - 0.05 * k for k in range(0, 40)]  # 真下向きから順に試す向き
 
@@ -55,8 +59,10 @@ A/D: hand left / right
 R/F: hand up / down
 O/C: open / close gripper
 X:   go to home (10 cm above the table, hand pointing down)
+Z:   put the block back to its start position (before recording only)
 ESC: quit
 The hand always points as straight down as it can.
+The hand stops 3.2 cm above the table (the fingertips touch the table below that).
 """
 
 KEY_MOVES = {
@@ -147,6 +153,9 @@ class EETeleopNode(Node):
     def _move(self, dx, dy, dz):
         x, y, z = self.target
         t = (x + dx, y + dy, z + dz)
+        if t[2] < MIN_HAND_Z:
+            self._print_status("too low: the fingertips would hit the table")
+            return
         q = solve_pointing_down(*t, q_ref=self.q)
         if q is None or max(abs(a - b) for a, b in zip(q, self.q, strict=True)) > MAX_JOINT_JUMP:
             self._print_status("cannot move there")
@@ -163,6 +172,11 @@ class EETeleopNode(Node):
                 if ord(key) == 27:  # ESC
                     self.running = False
                     break
+                if key.lower() == "z":
+                    # Gazebo への問い合わせに 0.5 秒ほどかかるので、送信を止めないようロックの外で行う
+                    ok = reset_cube()
+                    print("block: back to start" if ok else "block: reset FAILED", flush=True)
+                    continue
                 with self.lock:
                     if self.q is None:
                         print("waiting for /joint_states", flush=True)

@@ -14,6 +14,8 @@ CUBE_NAME = "wood_cube_5cm"
 # Fuel の "Wood cube 5cm" はモデルの原点が底面にある（机の上で原点の高さ＝机の高さ 1.015 になる）。
 # 中心はそこから 2.5cm 上
 CUBE_HALF_SIZE = 0.025
+# ブロックの初期位置（world 座標）。crane_plus_with_table.launch.py の world に置かれている位置
+CUBE_HOME_WORLD = (0.0, -0.1, 1.02)
 
 _NUM = r"(-?[\d.]+(?:e[-+]?\d+)?)"
 
@@ -54,3 +56,32 @@ def cube_center_in_robot_frame():
     if p is None:
         return None
     return p[0], p[1], p[2] + CUBE_HALF_SIZE
+
+
+def reset_cube(timeout: float = 5.0) -> bool:
+    """ブロックを初期位置へ戻す（向きもまっすぐに）。戻せたら True。"""
+    x, y, z = CUBE_HOME_WORLD
+    req = f'name: "{CUBE_NAME}", position: {{x: {x}, y: {y}, z: {z}}}, orientation: {{w: 1}}'
+    try:
+        out = subprocess.run(
+            [
+                "ign",
+                "service",
+                "-s",
+                "/world/default/set_pose",
+                "--reqtype",
+                "ignition.msgs.Pose",
+                "--reptype",
+                "ignition.msgs.Boolean",
+                "--timeout",
+                str(int(timeout * 1000)),
+                "--req",
+                req,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 2,
+        ).stdout
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return False
+    return "data: true" in out
