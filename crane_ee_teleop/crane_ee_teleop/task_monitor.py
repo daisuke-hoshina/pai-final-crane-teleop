@@ -1,5 +1,7 @@
 """手先から目標点までの位置の差を表示する（テレオペの補助）。
 
+差は手先空間テレオペのキーと同じ、根元を中心にした向きで出す: 根元のまわりに回る（A/D）・
+根元から遠く / 近く（W/S）・上 / 下（R/F）。
 指令は何も送らないので、関節空間テレオペ・手先空間テレオペのどちらとも一緒に使える。
 
   ros2 run crane_ee_teleop task_monitor                 # grasp: 目標点はつかむ位置。浮き上がりも出す
@@ -36,7 +38,7 @@ class TaskMonitor(Node):
         where = "つかむ位置＝ブロックの中心の 1cm 上" if task == "grasp" else "ブロックの真上"
         print(
             f"目標点（{where}）が手先から見てどこにあるかを表示します。"
-            "前＝ロボットの正面、左右＝ロボットから見た左右。"
+            "回る＝根元のまわり（A/D）、遠く・近く＝今の向きのまま根元から（W/S）、上下（R/F）。"
         )
         self.create_subscription(JointState, "/joint_states", self._on_state, 10)
         self.q = None
@@ -63,11 +65,12 @@ class TaskMonitor(Node):
         if self.q is None or self.target is None:
             print("\r\033[K/joint_states とブロックの位置を待っています", end="", flush=True)
             return
-        d = [t - h for t, h in zip(self.target, hand_position(self.q), strict=True)]
-        dist = math.dist((0, 0, 0), d)
+        hand = hand_position(self.q)
+        dist = math.dist(self.target, hand)
+        dth, arc, dr, dz = cylindrical_diff(self.target, hand)
         line = (
-            f"目標点は手先から見て  {_dir(d[0], '前', '後ろ')} / {_dir(d[1], '左', '右')}"
-            f" / {_dir(d[2], '上', '下')}   （距離 {100 * dist:4.1f}cm）"
+            f"目標点は  回る {_turn(dth, arc)} / {_dir(dr, '遠く', '近く', 'W', 'S')}"
+            f" / {_dir(dz, '上', '下', 'R', 'F')}   （距離 {100 * dist:4.1f}cm）"
         )
         if self.task == "grasp":
             lift = self.lift or 0.0
@@ -81,11 +84,33 @@ class TaskMonitor(Node):
         print("\r\033[K" + line, end="", flush=True)
 
 
-def _dir(d, plus, minus):
-    """差 d [m] を「前に 1.2cm」のような言葉にする。"""
+def cylindrical_diff(target, hand):
+    """手先から目標点への差を、根元を中心にした向きで返す。
+
+    (根元のまわりの角度 [rad、左 = 正], その角度ぶん手先が円に沿って動く長さ [m],
+    根元からの距離の差 [m、遠く = 正], 高さの差 [m、上 = 正])
+    """
+    r_t, r_h = math.hypot(target[0], target[1]), math.hypot(hand[0], hand[1])
+    dth = math.atan2(target[1], target[0]) - math.atan2(hand[1], hand[0])
+    dth = (dth + math.pi) % (2 * math.pi) - math.pi
+    return dth, r_h * dth, r_t - r_h, target[2] - hand[2]
+
+
+def _turn(dth, arc):
+    """角度の差を「右に 7.0°（1.2cm、D）」のような言葉にする。"""
+    if abs(arc) < 0.0005:
+        return "左右 0.0°"
+    side, key = ("左", "A") if dth > 0 else ("右", "D")
+    return f"{side}に {math.degrees(abs(dth)):4.1f}°（{100 * abs(arc):4.1f}cm、{key}）"
+
+
+def _dir(d, plus, minus, key_plus, key_minus):
+    """差 d [m] を「遠くに 1.2cm（W）」のような言葉にする。"""
     if abs(d) < 0.0005:
         return f"{plus}{minus} 0.0cm"
-    return f"{plus if d > 0 else minus}に {100 * abs(d):4.1f}cm"
+    if d > 0:
+        return f"{plus}に {100 * d:4.1f}cm（{key_plus}）"
+    return f"{minus}に {100 * -d:4.1f}cm（{key_minus}）"
 
 
 def main():

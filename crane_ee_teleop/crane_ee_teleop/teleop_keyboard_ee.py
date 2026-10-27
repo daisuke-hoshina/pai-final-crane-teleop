@@ -1,6 +1,6 @@
 """CRANE+ V2 の手先空間キーボードテレオペ。
 
-キーで手先の位置（前後・左右・上下）だけを動かす。手先の向きは操作せず、いつも
+キーで手先の位置（根元からの距離・根元のまわりの向き・高さ）だけを動かす。手先の向きは操作せず、いつも
 「その位置で届く範囲でいちばん真下に近い向き」に自動で決める（上からつかむため）。
 逆運動学で 4 関節の目標角度に変換して送る。
 
@@ -15,6 +15,7 @@ import select
 import sys
 import termios
 import threading
+import time
 import tty
 
 import rclpy
@@ -54,8 +55,8 @@ PITCH_CANDIDATES = [math.pi - 0.05 * k for k in range(0, 40)]  # 真下向きか
 HELP = """
 Teleop CRANE+ V2 (Hand-space control)
 -------------------------------------
-W/S: hand forward / backward
-A/D: hand left / right
+W/S: hand away from / toward the base (same direction, same height)
+A/D: turn left / right around the base (same distance, same height; only joint1 moves)
 R/F: hand up / down
 O/C: open / close gripper
 X:   go to home (10 cm above the table, hand pointing down)
@@ -65,14 +66,32 @@ The hand always points as straight down as it can.
 The hand stops 3.2 cm above the table (the fingertips touch the table below that).
 """
 
+# [rad] A/D の 1 回で根元のまわりに回る角度。根元から 10cm の所で約 5mm
+ANGLE_STEP = 0.05
+# [s] 移動キーを受け付ける最短の間隔。押しっぱなしにすると端末のキーリピート（1 秒に約 30 回）で速すぎるので、
+# 1 秒に 10 ステップまでにする（A/D で 90° に約 3 秒、R/F で 1 秒に 5cm）。それより速い入力は捨てる
+MIN_MOVE_INTERVAL = 0.1
+
+# キー: (根元からの距離の変化 [m], 根元のまわりの角度の変化 [rad], 高さの変化 [m])。
+# 手先の位置は根元を中心にした円柱座標で動かす。A/D は距離と高さを保って回るので joint1 だけが動き、
+# W/S は向き（joint1）と高さを保って根元から遠ざかる・近づく。
+# 2026-10-27 まではまっすぐの前後・左右（x, y）だった。A/D で右へ動かすと根元から遠ざかって腕が伸びるため変えた
 KEY_MOVES = {
     "w": (POS_STEP, 0.0, 0.0),
     "s": (-POS_STEP, 0.0, 0.0),
-    "a": (0.0, POS_STEP, 0.0),
-    "d": (0.0, -POS_STEP, 0.0),
+    "a": (0.0, ANGLE_STEP, 0.0),
+    "d": (0.0, -ANGLE_STEP, 0.0),
     "r": (0.0, 0.0, POS_STEP),
     "f": (0.0, 0.0, -POS_STEP),
 }
+
+
+def step_target(target, key):
+    """キー 1 回分の手先の目標位置 (x, y, z)。"""
+    x, y, z = target
+    dr, dth, dz = KEY_MOVES[key]
+    r, th = math.hypot(x, y), math.atan2(y, x)
+    return ((r + dr) * math.cos(th + dth), (r + dr) * math.sin(th + dth), z + dz)
 
 
 def solve_pointing_down(x, y, z, q_ref=None):
@@ -122,6 +141,7 @@ class EETeleopNode(Node):
         self.q = None  # 指令中の関節角 (q1, q2, q3, q4)。最初の /joint_states で初期化する
         self.target = None  # 指令中の手先の位置 (x, y, z)
         self.gripper_pos = GRIPPER_OPEN
+        self.last_move = 0.0  # 最後に移動キーを受け付けた時刻（time.monotonic）
         self.running = True
         print(HELP)
         self.create_timer(PUBLISH_PERIOD, self._publish)
@@ -150,9 +170,8 @@ class EETeleopNode(Node):
             flush=True,
         )
 
-    def _move(self, dx, dy, dz):
-        x, y, z = self.target
-        t = (x + dx, y + dy, z + dz)
+    def _move(self, key):
+        t = step_target(self.target, key)
         if t[2] < MIN_HAND_Z:
             self._print_status("too low: the fingertips would hit the table")
             return
@@ -183,7 +202,11 @@ class EETeleopNode(Node):
                         continue
                     k = key.lower()
                     if k in KEY_MOVES:
-                        self._move(*KEY_MOVES[k])
+                        now = time.monotonic()
+                        if now - self.last_move < MIN_MOVE_INTERVAL:
+                            continue
+                        self.last_move = now
+                        self._move(k)
                     elif k == "o":
                         self.gripper_pos = GRIPPER_OPEN
                         print("gripper: OPEN", flush=True)
