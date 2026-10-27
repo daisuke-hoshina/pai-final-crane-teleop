@@ -1,0 +1,18 @@
+# 出典: https://github.com/matsuolab/pai_training（commit b4d6b54、Physical AI 応用編1 の演習用リポジトリ）の configs/train_config.yaml を写して変えたもの。
+dataset_root: "/home/ubuntu/dataset/lerobot_dataset/crane_plus_grasp_v2_train_trimstill_vel"
+repo_id: "crane_plus_grasp_v2_train_trimstill_vel"
+output_directory: "/home/ubuntu/checkpoints/train/crane_plus_grasp_act_v2_vel_batch16"
+config_path: "configs/crane_features.py"
+
+device: "cuda"
+training_steps: 10000
+log_freq: 1
+num_workers: 2
+batch_size: 16
+chunk_size: 16
+n_action_steps: 1
+learning_rate: 0.0001
+delta_timestamps:
+  observation.environment_state: [0.0]
+  observation.state: [0.0]
+  action: [-0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4]

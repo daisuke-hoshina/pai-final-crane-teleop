@@ -1,0 +1,5 @@
+# 出典: https://github.com/matsuolab/pai_training（commit b4d6b54、Physical AI 応用編1 の演習用リポジトリ）の configs/conversion_config.yaml を写して変えたもの。
+bag_dir: "/home/ubuntu/dataset/rosbags/grasp_v2_train"
+output_dir: "/home/ubuntu/dataset/lerobot_dataset/crane_plus_grasp_v2_train_trimstill_vel"
+config: "configs/crane_features.py"
+target_freq: 20

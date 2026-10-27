@@ -23,6 +23,7 @@ Gazebo 上の CRANE+ V2 に、キーボードで手先を動かす「手先空�
   - `crane_ee_teleop/task_monitor.py` … 手先から目標点までの差と、ブロックの浮きを表示する（指令は送らない）
   - `crane_ee_teleop/record_episode.py` … デモを 1 エピソード記録する（ホームの確認、番号の自動採番、成功の判定）
   - `crane_ee_teleop/gazebo_objects.py` … Gazebo のモデル（ブロック）の位置を読む・初期位置へ戻す
+- `policy/` … 模倣学習（変換・学習設定・推論・評価）。下の「模倣学習（ACT）」
 
 ## Gazebo の準備（指の摩擦を上げる）
 
@@ -109,4 +110,34 @@ reach タスクで、手先空間テレオペは 16 回中 16 回成功（慣れ
 cd crane_ee_teleop && python3 -m pytest test/
 ```
 
-（作業中。学習・評価の結果は随時追記する）
+## 模倣学習（ACT）
+
+講義の演習用リポジトリ [matsuolab/pai_training](https://github.com/matsuolab/pai_training)（commit `b4d6b54`）の上で動かす。
+`policy/` のうち、変換スクリプト・推論スクリプト・設定ファイルはそのリポジトリのファイルを写して変えたもので、各ファイルの先頭に出典を書いた。
+`eval_policy.py` は自作。
+
+- `policy/convert/` … rosbag → LeRobot 形式の変換（元は `scripts/rosbag2lerobot.py`）。講義版からの変更:
+  パディングをしない、腕が止まっている区間を 4 フレーム（0.2 秒）まで詰める、
+  `observation.environment_state` を関節角の複製から「0.1 秒前からの関節角の変化（速さ）」にする
+- `policy/train/configs/` … 学習設定（講義の `scripts/train.py` をそのまま使う）。講義版からの変更は batch_size 16・training_steps 10,000 とデータの場所
+- `policy/infer_chunk.py` … 推論（元は `scripts/infer.py`）。オプションを付けなければ講義版と同じ動き。
+  提出の構成では `--vel-env`（観測に速さ）と `--ensemble 0.01`（時間的アンサンブル: 0.1 秒ごとに予測し、
+  過去の予測のうち今の時刻に当たる指令を平均する。ACT の論文の推論）を使う
+- `policy/eval_policy.py` … デプロイして N 回測る（ホームへ戻す → ブロックを初期位置へ → 推論を起動 → ブロックが 3cm 以上浮けば成功）
+
+パスはコンテナ（ユーザー `ubuntu`、このリポジトリを `/workspace/pai-final-crane-teleop` に置く）の中を前提にしている。
+
+```bash
+# 1. 変換（デモ 10 本の rosbag → LeRobot 形式）
+cd policy/convert && pixi run --manifest-path ~/pai_training/pyproject.toml python rosbag2lerobot_trimstill_vel.py
+# 2. 学習（GPU MX350 で約 31 分）
+cd policy/train && pixi run --manifest-path ~/pai_training/pyproject.toml python ~/pai_training/scripts/train.py
+# 3. 評価（10 回、各 120 秒。Gazebo とコントローラを起動しておく）
+source /opt/ros/humble/setup.bash && source ~/pai_ws/install/setup.bash
+cd policy && python3 eval_policy.py ~/checkpoints/train/crane_plus_grasp_act_v2_vel_batch16 10 120 \
+  "/workspace/pai-final-crane-teleop/policy/infer_chunk.py --vel-env --index 1 --hold 2 --ensemble 0.01"
+```
+
+結果: **10 回中 9 回成功**（ブロックの浮き 10.3〜18.6cm）。ルール（手で書いた条件）は使わず、方策の出力だけで
+「ブロックの方へ回る → 真上で下りる → 一番下で閉じる → 持ち上げる」を行う。
+講義の推論（毎ティック chunk の先頭だけを使う）では、同じモデルが回る途中で止まった（0/5）。
